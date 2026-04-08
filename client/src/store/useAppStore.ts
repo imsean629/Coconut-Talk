@@ -1,4 +1,4 @@
-﻿import { create } from 'zustand';
+import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { io, Socket } from 'socket.io-client';
 import {
@@ -17,7 +17,7 @@ import { loungeAnnouncements, loungeFeed } from '../data/mockData';
 import { Announcement, AppRoom, AppTypingState, AppUser, LocalMessage, LostRoom, SessionProfile, Toast } from '../types';
 import { pickAvatarColor } from '../utils/format';
 
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:3030';
+const DEFAULT_SERVER_URL = 'https://coconut-talk-relay.onrender.com';
 let socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
 
 const makeId = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -348,7 +348,8 @@ export const useChatStore = create<ChatState>()(
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.hydrated = true;
-          state.serverUrl = normalizeServerUrl(state.serverUrl);
+          const normalized = normalizeServerUrl(state.serverUrl);
+          state.serverUrl = normalized === 'http://127.0.0.1:3030' ? DEFAULT_SERVER_URL : normalized;
         }
       },
     },

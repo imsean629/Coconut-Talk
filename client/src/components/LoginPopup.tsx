@@ -1,4 +1,4 @@
-﻿import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon } from '@heroicons/react/24/outline';
 import { FormEvent, useState } from 'react';
 import { characterVariants } from '../utils/characters';
 import { BrandMark } from './ui/BrandMark';
@@ -60,8 +60,8 @@ export function LoginPopup({ onLogin, connectionState, initialServerUrl }: Login
             </button>
             {showServerOptions && (
               <div className="mt-3 border-t border-[#f0dfcb] pt-3">
-                <input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="예: http://192.168.0.10:3030" className="w-full rounded-[20px] border border-[#efd8bf] bg-white px-4 py-3 text-coconut-ink outline-none transition focus:border-coconut-palm focus:ring-4 focus:ring-coconut-palm/10" />
-                <p className="mt-2 text-xs text-coconut-shell/65">기본값은 로컬 서버 `127.0.0.1:3030` 이에요.</p>
+                <input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="예: https://coconut-talk-relay.onrender.com" className="w-full rounded-[20px] border border-[#efd8bf] bg-white px-4 py-3 text-coconut-ink outline-none transition focus:border-coconut-palm focus:ring-4 focus:ring-coconut-palm/10" />
+                <p className="mt-2 text-xs text-coconut-shell/65">기본값은 `https://coconut-talk-relay.onrender.com` 이에요.</p>
               </div>
             )}
           </div>
