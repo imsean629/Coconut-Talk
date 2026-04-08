@@ -13,7 +13,7 @@
     "dev:electron": "tsc -p tsconfig.electron.json --watch",
     "build": "tsc -b && vite build && tsc -p tsconfig.electron.json && tsc -p tsconfig.server.json",
     "preview": "vite preview",
-    "start:server": "node dist-electron/server/index.js",
+    "start:server": "node dist-server/server/index.js",
     "make:icon": "node scripts/make-icon.mjs",
     "pack:dir": "npm run make:icon && npm run build && electron-builder --win dir",
     "patch:exe-icon": "node scripts/patch-exe-icon.mjs",
@@ -57,6 +57,7 @@
     "files": [
       "dist/**",
       "dist-electron/**",
+      "dist-server/**",
       "build/icon.png",
       "build/icon.ico",
       "package.json"
