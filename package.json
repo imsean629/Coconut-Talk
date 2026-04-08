@@ -1,0 +1,89 @@
+{
+  "name": "coconut-talk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Coconut Talk multi-client desktop messenger MVP",
+  "author": "OpenAI Codex",
+  "main": "dist-electron/client/electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:renderer\" \"npm:dev:electron\" \"wait-on tcp:3030 tcp:5173 dist-electron/client/electron/main.js && electron .\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.electron.json --watch",
+    "build": "tsc -b && vite build && tsc -p tsconfig.electron.json && tsc -p tsconfig.server.json",
+    "preview": "vite preview",
+    "start:server": "node dist-electron/server/index.js",
+    "make:icon": "node scripts/make-icon.mjs",
+    "pack:dir": "npm run make:icon && npm run build && electron-builder --win dir",
+    "patch:exe-icon": "node scripts/patch-exe-icon.mjs",
+    "dist:win": "npm run pack:dir && npm run patch:exe-icon && electron-builder --win nsis --prepackaged release/win-unpacked",
+    "pack:win": "npm run pack:dir && npm run patch:exe-icon"
+  },
+  "dependencies": {
+    "@heroicons/react": "^2.2.0",
+    "clsx": "^2.1.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.2",
+    "electron": "^35.2.1",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^2.1.8",
+    "postcss": "^8.5.3",
+    "rcedit": "^5.0.2",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.coconut.talk",
+    "productName": "Coconut Talk",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "build/icon.png",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Coconut-Talk-Setup-${version}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Coconut Talk",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
+    }
+  }
+}

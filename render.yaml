@@ -1,0 +1,11 @@
+﻿services:
+  - type: web
+    name: coconut-talk-relay
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:server
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
