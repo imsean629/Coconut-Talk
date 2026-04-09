@@ -8,6 +8,7 @@ export function RoomsPage({
   lostRooms,
   users,
   session,
+  unreadByRoom,
   onCreateRoom,
   onEnterRoom,
   onLeaveRoom,
@@ -16,6 +17,7 @@ export function RoomsPage({
   lostRooms: LostRoom[];
   users: AppUser[];
   session: SessionProfile;
+  unreadByRoom: Record<string, number>;
   onCreateRoom: () => void;
   onEnterRoom: (roomId: string) => void;
   onLeaveRoom: (roomId: string) => void;
@@ -44,8 +46,13 @@ export function RoomsPage({
               <div key={room.id} className="rounded-[24px] border border-[#efdcc8] bg-[#fffaf5] px-4 py-4 transition hover:border-coconut-palm">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <button type="button" onClick={() => onEnterRoom(room.id)} className="flex-1 text-left">
-                    <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                       <p className="text-lg font-semibold text-coconut-ink">{room.title}</p>
+                      {(unreadByRoom[room.id] ?? 0) > 0 && (
+                        <span className="rounded-full bg-[#ffe0df] px-2.5 py-1 text-xs font-semibold text-rose-700">
+                          새 메시지 {unreadByRoom[room.id]}
+                        </span>
+                      )}
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${room.type === 'public' ? 'bg-[#e6f2dc] text-coconut-shell' : 'bg-coconut-shell text-white'}`}>
                         {room.type === 'public' ? '공개방' : '비공개방'}
                       </span>

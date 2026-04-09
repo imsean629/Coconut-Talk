@@ -1,4 +1,4 @@
-﻿import { createServer } from 'node:http';
+import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import {
@@ -19,7 +19,7 @@ import { ChatMessage, RoomSummary, ServerUser, TypingState } from '../shared/mod
 type SocketData = { clientId?: string };
 
 type RoomRecord = RoomSummary & { password?: string };
-type UserRecord = ServerUser & { socketId?: string };
+type UserRecord = ServerUser & { socketIds: Set<string> };
 
 export type RelayServerHandle = {
   port: number;
@@ -54,7 +54,7 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
     nickname: user.nickname,
     avatarSeed: user.avatarSeed,
     color: user.color,
-    online: user.online,
+    online: user.socketIds.size > 0,
     lastSeenAt: user.lastSeenAt,
   });
 
@@ -86,11 +86,19 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
   const emitRoom = (room: RoomRecord) => io.emit('rooms:upsert', serializeRoom(room));
   const emitRoomRemoved = (roomId: string) => io.emit('rooms:remove', { roomId });
 
-  const attachSocketToKnownRooms = (socketId: string, clientId: string) => {
+  const joinSocketToVisibleRooms = (socketId: string, clientId: string) => {
     getVisibleRooms().forEach((room) => {
       if (room.type === 'public' || room.participantIds.includes(clientId)) {
         io.sockets.sockets.get(socketId)?.join(room.id);
       }
+    });
+  };
+
+  const joinAllUserSocketsToRoom = (userId: string, roomId: string) => {
+    const user = users.get(userId);
+    if (!user) return;
+    user.socketIds.forEach((socketId) => {
+      io.sockets.sockets.get(socketId)?.join(roomId);
     });
   };
 
@@ -114,10 +122,21 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
 
   io.on('connection', (socket) => {
     socket.on('session:join', (payload: JoinSessionPayload, ack: (payload: SessionSyncPayload) => void) => {
-      const user: UserRecord = { clientId: payload.clientId, nickname: payload.nickname, avatarSeed: payload.avatarSeed, color: payload.color, online: true, lastSeenAt: new Date().toISOString(), socketId: socket.id };
+      const previous = users.get(payload.clientId);
+      const user: UserRecord = {
+        clientId: payload.clientId,
+        nickname: payload.nickname,
+        avatarSeed: payload.avatarSeed,
+        color: payload.color,
+        online: true,
+        lastSeenAt: new Date().toISOString(),
+        socketIds: new Set(previous?.socketIds ?? []),
+      };
+
+      user.socketIds.add(socket.id);
       socket.data.clientId = payload.clientId;
       users.set(payload.clientId, user);
-      attachSocketToKnownRooms(socket.id, payload.clientId);
+      joinSocketToVisibleRooms(socket.id, payload.clientId);
       ack(buildSyncPayload(payload.clientId));
       emitPresence();
     });
@@ -140,11 +159,7 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       };
 
       rooms.set(room.id, room);
-      socket.join(room.id);
-      room.participantIds.forEach((participantId) => {
-        const participant = users.get(participantId);
-        if (participant?.socketId) io.sockets.sockets.get(participant.socketId)?.join(room.id);
-      });
+      room.participantIds.forEach((participantId) => joinAllUserSocketsToRoom(participantId, room.id));
       emitRoom(room);
       ack(roomAck(room));
     });
@@ -164,7 +179,7 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       }
 
       ensureMembership(room, clientId);
-      socket.join(room.id);
+      joinAllUserSocketsToRoom(clientId, room.id);
       emitRoom(room);
       ack(roomAck(room));
     });
@@ -177,7 +192,9 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       if (!room.participantIds.includes(clientId)) return void ack(roomAck(undefined, 'not_member'));
 
       room.participantIds = room.participantIds.filter((participantId) => participantId !== clientId);
-      socket.leave(room.id);
+      users.get(clientId)?.socketIds.forEach((socketId) => {
+        io.sockets.sockets.get(socketId)?.leave(room.id);
+      });
 
       if (room.participantIds.length === 0) {
         rooms.delete(room.id);
@@ -202,10 +219,7 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       if (!room.participantIds.includes(clientId)) return void ack(roomAck(undefined, 'not_member'));
 
       room.participantIds = Array.from(new Set([...room.participantIds, ...payload.userIds]));
-      payload.userIds.forEach((userId) => {
-        const invited = users.get(userId);
-        if (invited?.socketId) io.sockets.sockets.get(invited.socketId)?.join(room.id);
-      });
+      payload.userIds.forEach((userId) => joinAllUserSocketsToRoom(userId, room.id));
 
       emitRoom(room);
       ack(roomAck(room));
@@ -237,7 +251,11 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       if (!clientId) return;
       const user = users.get(clientId);
       if (!user) return;
-      users.set(clientId, { ...user, online: false, socketId: undefined, lastSeenAt: new Date().toISOString() });
+
+      user.socketIds.delete(socket.id);
+      user.lastSeenAt = new Date().toISOString();
+      user.online = user.socketIds.size > 0;
+      users.set(clientId, user);
       emitPresence();
     });
   });

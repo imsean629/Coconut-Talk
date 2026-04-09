@@ -1,4 +1,4 @@
-﻿import { BrowserWindow, app, ipcMain, screen, nativeImage } from 'electron';
+import { BrowserWindow, Notification, app, ipcMain, nativeImage, screen } from 'electron';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,9 +21,12 @@ type LocalMessage = {
   error?: string;
 };
 
+type RoomWindowState = 'open' | 'hidden' | 'closed';
+
 let mainWindow: BrowserWindow | null = null;
 let database: DatabaseSync;
 let relayHandle: RelayServerHandle | null = null;
+const roomWindows = new Map<string, BrowserWindow>();
 
 const isDev = !app.isPackaged;
 const devServerUrl = 'http://localhost:5173';
@@ -134,17 +137,23 @@ const ensureLocalRelayServer = async () => {
   }
 };
 
-const loadRenderer = async () => {
-  if (!mainWindow) return;
+const loadRenderer = async (targetWindow: BrowserWindow, query?: Record<string, string>) => {
   if (!isDev) {
-    await mainWindow.loadFile(packagedRendererPath);
+    await targetWindow.loadFile(packagedRendererPath, query ? { query } : undefined);
     return;
+  }
+
+  const url = new URL(devServerUrl);
+  if (query) {
+    Object.entries(query).forEach(([key, value]) => {
+      url.searchParams.set(key, value);
+    });
   }
 
   let lastError: unknown;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
-      await mainWindow.loadURL(devServerUrl);
+      await targetWindow.loadURL(url.toString());
       return;
     } catch (error) {
       lastError = error;
@@ -154,7 +163,11 @@ const loadRenderer = async () => {
   throw lastError;
 };
 
-const createWindow = async () => {
+const emitRoomWindowState = (roomId: string, state: RoomWindowState) => {
+  mainWindow?.webContents.send('room-window:state-changed', { roomId, state });
+};
+
+const createMainWindow = async () => {
   mainWindow = new BrowserWindow({
     ...centerBounds(520, 640),
     minWidth: 520,
@@ -172,7 +185,61 @@ const createWindow = async () => {
     },
   });
 
-  await loadRenderer();
+  await loadRenderer(mainWindow);
+};
+
+const getRoomIdForWindow = (targetWindow: BrowserWindow) =>
+  Array.from(roomWindows.entries()).find(([, candidate]) => candidate === targetWindow)?.[0] ?? null;
+
+const showRoomWindow = (roomId: string) => {
+  const existing = roomWindows.get(roomId);
+  if (!existing || existing.isDestroyed()) {
+    return false;
+  }
+
+  existing.show();
+  existing.focus();
+  emitRoomWindowState(roomId, 'open');
+  return true;
+};
+
+const createRoomWindow = async (roomId: string) => {
+  const existing = roomWindows.get(roomId);
+  if (existing && !existing.isDestroyed()) {
+    showRoomWindow(roomId);
+    return existing;
+  }
+
+  const roomWindow = new BrowserWindow({
+    ...centerBounds(720, 760),
+    width: 720,
+    height: 760,
+    minWidth: 560,
+    minHeight: 520,
+    backgroundColor: '#f7ecdd',
+    title: 'Coconut Talk',
+    autoHideMenuBar: true,
+    resizable: true,
+    icon: nativeImage.createFromPath(iconPath),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  roomWindows.set(roomId, roomWindow);
+
+  roomWindow.on('show', () => emitRoomWindowState(roomId, 'open'));
+  roomWindow.on('focus', () => emitRoomWindowState(roomId, 'open'));
+  roomWindow.on('closed', () => {
+    roomWindows.delete(roomId);
+    emitRoomWindowState(roomId, 'closed');
+  });
+
+  await loadRenderer(roomWindow, { view: 'room', roomId });
+  emitRoomWindowState(roomId, 'open');
+  return roomWindow;
 };
 
 app.whenReady().then(async () => {
@@ -180,6 +247,58 @@ app.whenReady().then(async () => {
   await ensureLocalRelayServer();
 
   ipcMain.handle('window:set-mode', (_, mode: 'login' | 'main') => setWindowMode(mode));
+  ipcMain.handle('notify:show-message', (_, payload: { title: string; body: string }) => {
+    if (!Notification.isSupported()) {
+      return false;
+    }
+
+    const notification = new Notification({
+      title: payload.title,
+      body: payload.body,
+      icon: nativeImage.createFromPath(iconPath),
+      silent: false,
+    });
+
+    notification.on('click', () => {
+      mainWindow?.show();
+      mainWindow?.focus();
+    });
+    notification.show();
+    return true;
+  });
+  ipcMain.handle('room-window:open', async (_, roomId: string) => {
+    await createRoomWindow(roomId);
+    return true;
+  });
+  ipcMain.handle('room-window:minimize-current', (event) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!targetWindow) return false;
+
+    const roomId = getRoomIdForWindow(targetWindow);
+    if (!roomId) {
+      targetWindow.minimize();
+      return true;
+    }
+
+    targetWindow.hide();
+    emitRoomWindowState(roomId, 'hidden');
+    return true;
+  });
+  ipcMain.handle('room-window:close-current', (event) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!targetWindow) return false;
+
+    targetWindow.close();
+    return true;
+  });
+  ipcMain.handle('room-window:should-notify', (_, roomId: string) => {
+    const roomWindow = roomWindows.get(roomId);
+    if (!roomWindow || roomWindow.isDestroyed()) {
+      return true;
+    }
+
+    return !roomWindow.isVisible() || !roomWindow.isFocused();
+  });
   ipcMain.handle('db:get-messages', (_, roomId: string) => {
     const statement = database.prepare('SELECT * FROM messages WHERE room_id = ? ORDER BY created_at ASC');
     return statement.all(roomId).map((row) => rowToMessage(row as Record<string, unknown>));
@@ -191,10 +310,13 @@ app.whenReady().then(async () => {
     statement.run(payload.status, payload.error ?? null, payload.id);
   });
 
-  await createWindow();
+  await createMainWindow();
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      await createWindow();
+      await createMainWindow();
+    } else {
+      mainWindow?.show();
+      mainWindow?.focus();
     }
   });
 });

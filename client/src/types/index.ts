@@ -14,6 +14,11 @@ export type Toast = {
   description?: string;
 };
 
+export type DesktopNotificationPayload = {
+  title: string;
+  body: string;
+};
+
 export type SessionProfile = {
   clientId: string;
   nickname: string;

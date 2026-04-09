@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { LoginPopup } from './components/LoginPopup';
 import { Sidebar } from './components/layout/Sidebar';
 import { CreateRoomModal } from './components/modals/CreateRoomModal';
@@ -13,7 +13,19 @@ import { UsersPage } from './pages/UsersPage';
 import { useChatStore } from './store/useAppStore';
 import { AppRoom, NavItem } from './types';
 
-export default function App() {
+const readWindowMode = () => {
+  if (typeof window === 'undefined') {
+    return { isRoomWindow: false, roomId: null as string | null };
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  return {
+    isRoomWindow: searchParams.get('view') === 'room',
+    roomId: searchParams.get('roomId'),
+  };
+};
+
+function MainShell() {
   const session = useChatStore((state) => state.session);
   const hydrated = useChatStore((state) => state.hydrated);
   const serverUrl = useChatStore((state) => state.serverUrl);
@@ -24,31 +36,21 @@ export default function App() {
   const announcements = useChatStore((state) => state.announcements);
   const feed = useChatStore((state) => state.loungeFeed);
   const messagesByRoom = useChatStore((state) => state.messagesByRoom);
-  const typingByRoom = useChatStore((state) => state.typingByRoom);
   const initializeSession = useChatStore((state) => state.initializeSession);
   const login = useChatStore((state) => state.login);
   const logout = useChatStore((state) => state.logout);
-  const loadRoomMessages = useChatStore((state) => state.loadRoomMessages);
   const joinRoom = useChatStore((state) => state.joinRoom);
   const leaveRoom = useChatStore((state) => state.leaveRoom);
   const createRoom = useChatStore((state) => state.createRoom);
-  const inviteUsers = useChatStore((state) => state.inviteUsers);
-  const sendMessage = useChatStore((state) => state.sendMessage);
-  const setTyping = useChatStore((state) => state.setTyping);
 
   const [activeNav, setActiveNav] = useState<NavItem>('lounge');
-  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [unreadByRoom, setUnreadByRoom] = useState<Record<string, number>>({});
   const [showCreateRoom, setShowCreateRoom] = useState(false);
-  const [showInviteModal, setShowInviteModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [passwordTargetRoom, setPasswordTargetRoom] = useState<AppRoom | null>(null);
 
-  const selectedRoom = useMemo(
-    () => rooms.find((room) => room.id === selectedRoomId) ?? lostRooms.find((room) => room.id === selectedRoomId) ?? null,
-    [lostRooms, rooms, selectedRoomId],
-  );
-  const selectedMessages = selectedRoomId ? messagesByRoom[selectedRoomId] ?? [] : [];
-  const isLostRoom = selectedRoomId ? lostRooms.some((room) => room.id === selectedRoomId) : false;
+  const previousLastMessageRef = useRef<Record<string, string>>({});
+  const messageBootstrapRef = useRef(false);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -60,14 +62,75 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
-    if (selectedRoomId) {
-      void loadRoomMessages(selectedRoomId);
+    const unsubscribe = window.coconutDesktop?.roomWindow.onStateChanged((payload) => {
+      if (payload.state === 'open') {
+        setUnreadByRoom((current) => {
+          if (!(payload.roomId in current)) return current;
+          const next = { ...current };
+          delete next[payload.roomId];
+          return next;
+        });
+      }
+    });
+
+    return () => unsubscribe?.();
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      previousLastMessageRef.current = {};
+      messageBootstrapRef.current = false;
+      setUnreadByRoom({});
+      return;
     }
-  }, [loadRoomMessages, selectedRoomId]);
+
+    const nextSnapshot: Record<string, string> = {};
+    Object.entries(messagesByRoom).forEach(([roomId, messages]) => {
+      const lastMessage = messages.at(-1);
+      if (lastMessage) {
+        nextSnapshot[roomId] = lastMessage.id;
+      }
+    });
+
+    if (!messageBootstrapRef.current) {
+      previousLastMessageRef.current = nextSnapshot;
+      messageBootstrapRef.current = true;
+      return;
+    }
+
+    Object.entries(messagesByRoom).forEach(([roomId, messages]) => {
+      const lastMessage = messages.at(-1);
+      if (!lastMessage) return;
+      if (previousLastMessageRef.current[roomId] === lastMessage.id) return;
+      if (lastMessage.senderId === session.clientId) return;
+
+      void (async () => {
+        const shouldNotify = (await window.coconutDesktop?.roomWindow.shouldNotify(roomId)) ?? true;
+        if (shouldNotify) {
+          setUnreadByRoom((current) => ({ ...current, [roomId]: (current[roomId] ?? 0) + 1 }));
+          await window.coconutDesktop?.notify.showMessage({
+            title: `${lastMessage.senderNickname}님의 새 메시지`,
+            body: lastMessage.content,
+          });
+        }
+      })();
+    });
+
+    previousLastMessageRef.current = nextSnapshot;
+  }, [messagesByRoom, session]);
+
+  const openExternalRoomWindow = async (roomId: string) => {
+    setUnreadByRoom((current) => {
+      if (!(roomId in current)) return current;
+      const next = { ...current };
+      delete next[roomId];
+      return next;
+    });
+    await window.coconutDesktop?.roomWindow.open(roomId);
+  };
 
   const completeRoomOpen = async (roomId: string) => {
-    setSelectedRoomId(roomId);
-    await loadRoomMessages(roomId);
+    await openExternalRoomWindow(roomId);
   };
 
   const openRoom = async (roomId: string) => {
@@ -96,9 +159,35 @@ export default function App() {
 
   const handleLeaveRoom = async (roomId: string) => {
     const success = await leaveRoom(roomId);
-    if (success && selectedRoomId === roomId) {
-      setSelectedRoomId(null);
-      setShowInviteModal(false);
+    if (success) {
+      setUnreadByRoom((current) => {
+        if (!(roomId in current)) return current;
+        const next = { ...current };
+        delete next[roomId];
+        return next;
+      });
+    }
+  };
+
+  const handleStartDirectChat = async (userId: string) => {
+    if (!session) return;
+
+    const existingRoom = rooms.find((room) => room.participantIds.length === 2 && room.participantIds.includes(session.clientId) && room.participantIds.includes(userId));
+    if (existingRoom) {
+      await openRoom(existingRoom.id);
+      return;
+    }
+
+    const targetUser = users.find((user) => user.clientId === userId);
+    const newRoom = await createRoom({
+      title: `${targetUser?.nickname ?? '새 친구'}와의 1:1 대화`,
+      description: '접속자 목록에서 바로 시작한 1:1 대화방이에요.',
+      type: 'public',
+      invitedUserIds: [userId],
+    });
+
+    if (newRoom) {
+      await openRoom(newRoom.id);
     }
   };
 
@@ -114,8 +203,6 @@ export default function App() {
       </>
     );
   }
-
-  const inviteCandidates = users.filter((user) => user.clientId !== session.clientId);
 
   return (
     <div className="h-screen overflow-hidden bg-tropical p-5 lg:p-7">
@@ -137,25 +224,14 @@ export default function App() {
                 onOpenRoom={(roomId) => void openRoom(roomId)}
               />
             )}
-            {activeNav === 'users' && (
-              <UsersPage
-                users={users}
-                onInviteToRoom={(userId) =>
-                  void createRoom({
-                    title: `${users.find((user) => user.clientId === userId)?.nickname ?? '새'} 만남`,
-                    description: '접속자 목록에서 바로 시작한 실시간 대화방이에요.',
-                    type: 'public',
-                    invitedUserIds: [userId],
-                  }).then((room) => room && void openRoom(room.id))
-                }
-              />
-            )}
+            {activeNav === 'users' && <UsersPage users={users} onStartDirectChat={(userId) => void handleStartDirectChat(userId)} />}
             {activeNav === 'rooms' && (
               <RoomsPage
                 rooms={rooms}
                 lostRooms={lostRooms}
                 users={users}
                 session={session}
+                unreadByRoom={unreadByRoom}
                 onCreateRoom={() => setShowCreateRoom(true)}
                 onEnterRoom={(roomId) => void openRoom(roomId)}
                 onLeaveRoom={(roomId) => void handleLeaveRoom(roomId)}
@@ -165,28 +241,9 @@ export default function App() {
         </main>
       </div>
 
-      {selectedRoom && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#3d2a22]/28 px-5 py-6 backdrop-blur-sm">
-          <RoomDetailPage
-            room={selectedRoom}
-            isLost={isLostRoom}
-            users={users}
-            messages={selectedMessages}
-            session={session}
-            connectionState={connectionState}
-            typing={typingByRoom[selectedRoomId!] ?? []}
-            onBackToRooms={() => setSelectedRoomId(null)}
-            onInvite={() => setShowInviteModal(true)}
-            onLeaveRoom={() => void handleLeaveRoom(selectedRoom.id)}
-            onSendMessage={(content) => sendMessage(selectedRoomId!, content)}
-            onTypingChange={(isTyping) => setTyping(selectedRoomId!, isTyping)}
-          />
-        </div>
-      )}
-
       {showCreateRoom && (
         <CreateRoomModal
-          users={inviteCandidates}
+          users={users.filter((user) => user.clientId !== session.clientId)}
           onClose={() => setShowCreateRoom(false)}
           onCreate={(payload) =>
             void createRoom(payload).then((room) => {
@@ -194,14 +251,6 @@ export default function App() {
               if (room) void openRoom(room.id);
             })
           }
-        />
-      )}
-      {showInviteModal && selectedRoom && !isLostRoom && (
-        <InviteUsersModal
-          users={inviteCandidates}
-          existingUserIds={selectedRoom.participantIds}
-          onClose={() => setShowInviteModal(false)}
-          onInvite={(userIds) => void inviteUsers({ roomId: selectedRoom.id, userIds }).then(() => setShowInviteModal(false))}
         />
       )}
       {passwordTargetRoom && (
@@ -222,8 +271,8 @@ export default function App() {
           onClose={() => setShowLogoutConfirm(false)}
           onConfirm={() => {
             setShowLogoutConfirm(false);
-            setSelectedRoomId(null);
             setActiveNav('lounge');
+            setUnreadByRoom({});
             logout();
           }}
         />
@@ -232,4 +281,95 @@ export default function App() {
   );
 }
 
+function RoomWindowShell({ roomId }: { roomId: string }) {
+  const hydrated = useChatStore((state) => state.hydrated);
+  const session = useChatStore((state) => state.session);
+  const connectionState = useChatStore((state) => state.connectionState);
+  const users = useChatStore((state) => state.users);
+  const rooms = useChatStore((state) => state.rooms);
+  const lostRooms = useChatStore((state) => state.lostRooms);
+  const messagesByRoom = useChatStore((state) => state.messagesByRoom);
+  const typingByRoom = useChatStore((state) => state.typingByRoom);
+  const initializeSession = useChatStore((state) => state.initializeSession);
+  const loadRoomMessages = useChatStore((state) => state.loadRoomMessages);
+  const joinRoom = useChatStore((state) => state.joinRoom);
+  const leaveRoom = useChatStore((state) => state.leaveRoom);
+  const inviteUsers = useChatStore((state) => state.inviteUsers);
+  const sendMessage = useChatStore((state) => state.sendMessage);
+  const setTyping = useChatStore((state) => state.setTyping);
 
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const joinedRoomRef = useRef<string | null>(null);
+
+  const room = useMemo(() => rooms.find((item) => item.id === roomId) ?? lostRooms.find((item) => item.id === roomId) ?? null, [lostRooms, roomId, rooms]);
+  const isLost = lostRooms.some((item) => item.id === roomId);
+  const messages = messagesByRoom[roomId] ?? [];
+
+  useEffect(() => {
+    if (!hydrated) return;
+    initializeSession();
+  }, [hydrated, initializeSession]);
+
+  useEffect(() => {
+    void loadRoomMessages(roomId);
+  }, [loadRoomMessages, roomId]);
+
+  useEffect(() => {
+    if (!session || !room || isLost) return;
+    if (joinedRoomRef.current === roomId) return;
+
+    joinedRoomRef.current = roomId;
+    void joinRoom(roomId);
+  }, [isLost, joinRoom, room, roomId, session]);
+
+  if (!hydrated || !session) {
+    return null;
+  }
+
+  return (
+    <div className="h-screen overflow-hidden bg-tropical p-3">
+      <RoomDetailPage
+        room={room}
+        isLost={isLost}
+        users={users}
+        messages={messages}
+        session={session}
+        connectionState={connectionState}
+        typing={typingByRoom[roomId] ?? []}
+        onClose={() => void window.coconutDesktop?.roomWindow.closeCurrent()}
+        onMinimize={() => void window.coconutDesktop?.roomWindow.minimizeCurrent()}
+        onStartDrag={(_event: ReactMouseEvent<HTMLDivElement>) => {}}
+        onInvite={() => setShowInviteModal(true)}
+        onLeaveRoom={() =>
+          void leaveRoom(roomId).then((success) => {
+            if (success) {
+              void window.coconutDesktop?.roomWindow.closeCurrent();
+            }
+          })
+        }
+        onSendMessage={(content) => sendMessage(roomId, content)}
+        onTypingChange={(isTyping) => setTyping(roomId, isTyping)}
+      />
+
+      {showInviteModal && room && !isLost && (
+        <InviteUsersModal
+          users={users.filter((user) => user.clientId !== session.clientId)}
+          existingUserIds={room.participantIds}
+          onClose={() => setShowInviteModal(false)}
+          onInvite={(userIds) => void inviteUsers({ roomId, userIds }).then(() => setShowInviteModal(false))}
+        />
+      )}
+      <ToastLayer />
+    </div>
+  );
+}
+
+export default function App() {
+  const { isRoomWindow, roomId } = readWindowMode();
+
+  if (isRoomWindow && roomId) {
+    return <RoomWindowShell roomId={roomId} />;
+  }
+
+  return <MainShell />;
+}

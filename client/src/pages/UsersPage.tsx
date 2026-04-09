@@ -1,9 +1,9 @@
-﻿import { PlusIcon } from '@heroicons/react/24/outline';
+import { PlusIcon } from '@heroicons/react/24/outline';
 import { Avatar } from '../components/ui/Avatar';
 import { Panel } from '../components/ui/Panel';
 import { AppUser } from '../types';
 
-export function UsersPage({ users, onInviteToRoom }: { users: AppUser[]; onInviteToRoom: (userId: string) => void }) {
+export function UsersPage({ users, onStartDirectChat }: { users: AppUser[]; onStartDirectChat: (userId: string) => void }) {
   const onlineUsers = users.filter((user) => user.online);
 
   return (
@@ -33,7 +33,7 @@ export function UsersPage({ users, onInviteToRoom }: { users: AppUser[]; onInvit
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => onInviteToRoom(user.clientId)} className="flex items-center gap-2 rounded-[18px] bg-gradient-to-r from-coconut-shell to-coconut-bark px-4 py-2.5 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:shadow-soft">
+                <button type="button" onClick={() => onStartDirectChat(user.clientId)} className="flex items-center gap-2 rounded-[18px] bg-gradient-to-r from-coconut-shell to-coconut-bark px-4 py-2.5 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:shadow-soft">
                   <PlusIcon className="h-4 w-4" />1:1 대화
                 </button>
               </div>
