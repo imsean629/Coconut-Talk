@@ -1,4 +1,4 @@
-import { BrowserWindow, Notification, app, ipcMain, nativeImage, screen } from 'electron';
+import { BrowserWindow, Menu, Notification, Tray, app, ipcMain, nativeImage, screen } from 'electron';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,7 @@ type RoomWindowState = 'open' | 'hidden' | 'closed';
 let mainWindow: BrowserWindow | null = null;
 let database: DatabaseSync;
 let relayHandle: RelayServerHandle | null = null;
+let tray: Tray | null = null;
 const roomWindows = new Map<string, BrowserWindow>();
 
 const isDev = !app.isPackaged;
@@ -188,6 +189,36 @@ const createMainWindow = async () => {
   await loadRenderer(mainWindow);
 };
 
+const ensureTray = () => {
+  if (tray) return tray;
+
+  tray = new Tray(nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 }));
+  tray.setToolTip('Coconut Talk');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: '코코넛톡 열기',
+        click: () => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        },
+      },
+      {
+        label: '종료',
+        click: () => {
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on('click', () => {
+    mainWindow?.show();
+    mainWindow?.focus();
+  });
+
+  return tray;
+};
+
 const getRoomIdForWindow = (targetWindow: BrowserWindow) =>
   Array.from(roomWindows.entries()).find(([, candidate]) => candidate === targetWindow)?.[0] ?? null;
 
@@ -216,6 +247,7 @@ const createRoomWindow = async (roomId: string) => {
     height: 760,
     minWidth: 560,
     minHeight: 520,
+    show: false,
     backgroundColor: '#f7ecdd',
     title: 'Coconut Talk',
     autoHideMenuBar: true,
@@ -238,7 +270,18 @@ const createRoomWindow = async (roomId: string) => {
   });
 
   await loadRenderer(roomWindow, { view: 'room', roomId });
-  emitRoomWindowState(roomId, 'open');
+  if (!roomWindow.isDestroyed()) {
+    roomWindow.show();
+    roomWindow.focus();
+    roomWindow.moveTop();
+    roomWindow.setAlwaysOnTop(true);
+    setTimeout(() => {
+      if (!roomWindow.isDestroyed()) {
+        roomWindow.setAlwaysOnTop(false);
+      }
+    }, 1200);
+    emitRoomWindowState(roomId, 'open');
+  }
   return roomWindow;
 };
 
@@ -247,7 +290,7 @@ app.whenReady().then(async () => {
   await ensureLocalRelayServer();
 
   ipcMain.handle('window:set-mode', (_, mode: 'login' | 'main') => setWindowMode(mode));
-  ipcMain.handle('notify:show-message', (_, payload: { title: string; body: string }) => {
+  ipcMain.handle('notify:show-message', async (_, payload: { title: string; body: string; roomId?: string }) => {
     if (!Notification.isSupported()) {
       return false;
     }
@@ -260,8 +303,12 @@ app.whenReady().then(async () => {
     });
 
     notification.on('click', () => {
-      mainWindow?.show();
-      mainWindow?.focus();
+      if (payload.roomId) {
+        void createRoomWindow(payload.roomId);
+      } else {
+        mainWindow?.show();
+        mainWindow?.focus();
+      }
     });
     notification.show();
     return true;
@@ -311,6 +358,7 @@ app.whenReady().then(async () => {
   });
 
   await createMainWindow();
+  ensureTray();
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       await createMainWindow();

@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('coconutDesktop', {
   setWindowMode: (mode: 'login' | 'main') => ipcRenderer.invoke('window:set-mode', mode),
   notify: {
-    showMessage: (payload: { title: string; body: string }) => ipcRenderer.invoke('notify:show-message', payload),
+    showMessage: (payload: { title: string; body: string; roomId?: string }) => ipcRenderer.invoke('notify:show-message', payload),
   },
   roomWindow: {
     open: (roomId: string) => ipcRenderer.invoke('room-window:open', roomId),

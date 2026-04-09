@@ -1,4 +1,4 @@
-import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { LoginPopup } from './components/LoginPopup';
 import { Sidebar } from './components/layout/Sidebar';
 import { CreateRoomModal } from './components/modals/CreateRoomModal';
@@ -37,6 +37,7 @@ function MainShell() {
   const feed = useChatStore((state) => state.loungeFeed);
   const messagesByRoom = useChatStore((state) => state.messagesByRoom);
   const initializeSession = useChatStore((state) => state.initializeSession);
+  const loadRoomMessages = useChatStore((state) => state.loadRoomMessages);
   const login = useChatStore((state) => state.login);
   const logout = useChatStore((state) => state.logout);
   const joinRoom = useChatStore((state) => state.joinRoom);
@@ -108,16 +109,18 @@ function MainShell() {
         const shouldNotify = (await window.coconutDesktop?.roomWindow.shouldNotify(roomId)) ?? true;
         if (shouldNotify) {
           setUnreadByRoom((current) => ({ ...current, [roomId]: (current[roomId] ?? 0) + 1 }));
+          const room = rooms.find((item) => item.id === roomId) ?? lostRooms.find((item) => item.id === roomId);
           await window.coconutDesktop?.notify.showMessage({
-            title: `${lastMessage.senderNickname}님의 새 메시지`,
+            title: room ? `${room.title} 새 메시지` : `${lastMessage.senderNickname}님의 새 메시지`,
             body: lastMessage.content,
+            roomId,
           });
         }
       })();
     });
 
     previousLastMessageRef.current = nextSnapshot;
-  }, [messagesByRoom, session]);
+  }, [lostRooms, messagesByRoom, rooms, session]);
 
   const openExternalRoomWindow = async (roomId: string) => {
     setUnreadByRoom((current) => {
@@ -126,7 +129,11 @@ function MainShell() {
       delete next[roomId];
       return next;
     });
-    await window.coconutDesktop?.roomWindow.open(roomId);
+    await loadRoomMessages(roomId);
+    const opened = await window.coconutDesktop?.roomWindow.open(roomId);
+    if (!opened && typeof window !== 'undefined') {
+      window.open(`${window.location.origin}${window.location.pathname}?view=room&roomId=${encodeURIComponent(roomId)}`, '_blank', 'popup,width=720,height=760');
+    }
   };
 
   const completeRoomOpen = async (roomId: string) => {
@@ -172,7 +179,9 @@ function MainShell() {
   const handleStartDirectChat = async (userId: string) => {
     if (!session) return;
 
-    const existingRoom = rooms.find((room) => room.participantIds.length === 2 && room.participantIds.includes(session.clientId) && room.participantIds.includes(userId));
+    const existingRoom = rooms.find(
+      (room) => room.participantIds.length === 2 && room.participantIds.includes(session.clientId) && room.participantIds.includes(userId),
+    );
     if (existingRoom) {
       await openRoom(existingRoom.id);
       return;
@@ -315,12 +324,12 @@ function RoomWindowShell({ roomId }: { roomId: string }) {
   }, [loadRoomMessages, roomId]);
 
   useEffect(() => {
-    if (!session || !room || isLost) return;
+    if (!session || isLost) return;
     if (joinedRoomRef.current === roomId) return;
 
     joinedRoomRef.current = roomId;
     void joinRoom(roomId);
-  }, [isLost, joinRoom, room, roomId, session]);
+  }, [isLost, joinRoom, roomId, session]);
 
   if (!hydrated || !session) {
     return null;

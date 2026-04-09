@@ -17,6 +17,7 @@ export type Toast = {
 export type DesktopNotificationPayload = {
   title: string;
   body: string;
+  roomId?: string;
 };
 
 export type SessionProfile = {
