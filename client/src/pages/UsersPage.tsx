@@ -19,24 +19,25 @@ export function UsersPage({ users, onStartDirectChat }: { users: AppUser[]; onSt
           <p className="mt-2 text-3xl font-semibold">{onlineUsers.length}</p>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           {onlineUsers.map((user) => (
-            <div key={user.clientId} className="flex flex-col gap-4 rounded-[24px] border border-[#efdcc8] bg-[#fffaf5] px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center gap-4">
+            <div key={user.clientId} className="flex items-center justify-between gap-2.5 rounded-[16px] border border-[#efdcc8] bg-[#fffaf5] px-3 py-2">
+              <div className="min-w-0 flex items-center gap-2.5">
                 <div className="relative">
-                  <Avatar name={user.nickname} color={user.color} seed={user.avatarSeed} />
-                  <span className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-white bg-emerald-400" />
+                  <Avatar name={user.nickname} color={user.color} seed={user.avatarSeed} size="sm" />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-400" />
                 </div>
-                <div>
-                  <p className="font-semibold text-coconut-ink">{user.nickname}</p>
-                  <p className="text-sm text-coconut-shell/75">실시간 접속 중</p>
-                </div>
+                <p className="truncate text-[13px] font-semibold text-coconut-ink">{user.nickname}</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => onStartDirectChat(user.clientId)} className="flex items-center gap-2 rounded-[18px] bg-gradient-to-r from-coconut-shell to-coconut-bark px-4 py-2.5 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:shadow-soft">
-                  <PlusIcon className="h-4 w-4" />1:1 대화
-                </button>
-              </div>
+
+              <button
+                type="button"
+                onClick={() => onStartDirectChat(user.clientId)}
+                className="shrink-0 flex items-center gap-1 rounded-[14px] bg-gradient-to-r from-coconut-shell to-coconut-bark px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:-translate-y-0.5 hover:shadow-soft"
+              >
+                <PlusIcon className="h-3 w-3" />
+                1:1 대화
+              </button>
             </div>
           ))}
 

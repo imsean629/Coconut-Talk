@@ -65,7 +65,7 @@ type ChatState = {
   leaveRoom: (roomId: string) => Promise<boolean>;
   createRoom: (payload: CreateRoomPayload) => Promise<AppRoom | null>;
   inviteUsers: (payload: InviteUsersPayload) => Promise<AppRoom | null>;
-  sendMessage: (roomId: string, content: string) => Promise<void>;
+  sendMessage: (roomId: string, payload: { content?: string; imageData?: string }) => Promise<void>;
   setTyping: (roomId: string, isTyping: boolean) => void;
   dismissToast: (id: string) => void;
 };
@@ -127,6 +127,33 @@ const handleIncomingMessage = async (message: LocalMessage) => {
   useChatStore.setState((state) => ({ messagesByRoom: { ...state.messagesByRoom, [message.roomId]: upsertMessageList(state.messagesByRoom[message.roomId] ?? [], message) } }));
 };
 
+const applySessionSync = (payload: SessionSyncPayload) => {
+  useChatStore.setState((state) => ({
+    connectionState: 'connected',
+    serverEpoch: payload.serverEpoch,
+    users: payload.users,
+    rooms: payload.rooms,
+    lostRooms: markLostRoomsFromSync(state, payload).filter((room) => !payload.rooms.some((nextRoom) => nextRoom.id === room.id)),
+  }));
+};
+
+const resyncSession = (currentSocket: Socket<ServerToClientEvents, ClientToServerEvents>, session: SessionProfile) =>
+  new Promise<void>((resolve) => {
+    currentSocket.emit(
+      'session:join',
+      {
+        clientId: session.clientId,
+        nickname: session.nickname,
+        avatarSeed: session.avatarSeed,
+        color: session.color,
+      },
+      (payload: SessionSyncPayload) => {
+        applySessionSync(payload);
+        resolve();
+      },
+    );
+  });
+
 const wireSocket = (session: SessionProfile, serverUrl: string) => {
   if (socket) {
     socket.removeAllListeners();
@@ -145,13 +172,7 @@ const wireSocket = (session: SessionProfile, serverUrl: string) => {
   socket.on('connect', () => {
     useChatStore.setState({ connectionState: 'connecting' });
     socket?.emit('session:join', joinPayload, (payload: SessionSyncPayload) => {
-      useChatStore.setState((state) => ({
-        connectionState: 'connected',
-        serverEpoch: payload.serverEpoch,
-        users: payload.users,
-        rooms: payload.rooms,
-        lostRooms: markLostRoomsFromSync(state, payload).filter((room) => !payload.rooms.some((nextRoom) => nextRoom.id === room.id)),
-      }));
+      applySessionSync(payload);
     });
   });
 
@@ -172,7 +193,23 @@ const wireSocket = (session: SessionProfile, serverUrl: string) => {
   });
 
   socket.on('rooms:upsert', (room) => {
-    useChatStore.setState((state) => ({ rooms: upsertRoomList(state.rooms, room), lostRooms: state.lostRooms.filter((item) => item.id !== room.id) }));
+    useChatStore.setState((state) => {
+      const session = state.session;
+      const existingRoom = state.rooms.find((item) => item.id === room.id);
+      const nextState = {
+        rooms: upsertRoomList(state.rooms, room),
+        lostRooms: state.lostRooms.filter((item) => item.id !== room.id),
+      };
+
+      if (!session || existingRoom || !room.participantIds.includes(session.clientId) || room.createdBy === session.clientId) {
+        return nextState;
+      }
+
+      const creator = state.users.find((user) => user.clientId === room.createdBy);
+      const title = room.participantIds.length === 2 ? '새 1:1 대화가 도착했어요' : '새 대화방에 참여했어요';
+      const description = room.participantIds.length === 2 ? `${creator?.nickname ?? '상대방'}님이 대화를 시작했어요.` : `${room.title} 방이 목록에 추가됐어요.`;
+      return { ...nextState, ...pushToast(state, title, description) };
+    });
   });
 
   socket.on('rooms:remove', ({ roomId }) => {
@@ -181,6 +218,11 @@ const wireSocket = (session: SessionProfile, serverUrl: string) => {
 
   socket.on('messages:new', async (message) => {
     const current = useChatStore.getState().session;
+    const state = useChatStore.getState();
+    const knowsRoom = state.rooms.some((room) => room.id === message.roomId) || state.lostRooms.some((room) => room.id === message.roomId);
+    if (current && !knowsRoom && socket) {
+      await resyncSession(socket, current);
+    }
     await handleIncomingMessage({ ...message, status: current?.clientId === message.senderId ? 'sent' : 'received' });
   });
 
@@ -306,9 +348,11 @@ export const useChatStore = create<ChatState>()(
           });
         });
       },
-      sendMessage: async (roomId, content) => {
+      sendMessage: async (roomId, payload) => {
         const session = get().session;
-        if (!session || !content.trim()) return;
+        const content = payload.content?.trim() ?? '';
+        const imageData = payload.imageData;
+        if (!session || (!content && !imageData)) return;
         const optimistic: LocalMessage = {
           id: crypto.randomUUID(),
           roomId,
@@ -316,7 +360,9 @@ export const useChatStore = create<ChatState>()(
           senderNickname: session.nickname,
           senderAvatarSeed: session.avatarSeed,
           senderColor: session.color,
-          content: content.trim(),
+          content,
+          messageType: imageData ? 'image' : 'text',
+          imageData,
           createdAt: new Date().toISOString(),
           status: 'sending',
         };
@@ -325,8 +371,14 @@ export const useChatStore = create<ChatState>()(
           await setMessageStatus(optimistic.id, 'failed', '서버에 연결되어 있지 않아요.');
           return;
         }
-        const payload: SendMessagePayload = { id: optimistic.id, roomId, content: optimistic.content };
-        socket.emit('messages:send', payload, async (ack) => {
+        const nextPayload: SendMessagePayload = {
+          id: optimistic.id,
+          roomId,
+          content: optimistic.content,
+          messageType: optimistic.messageType,
+          imageData: optimistic.imageData,
+        };
+        socket.emit('messages:send', nextPayload, async (ack) => {
           if (!ack.ok) {
             await setMessageStatus(ack.messageId, 'failed', normalizeAckError(ack.error));
             if (ack.error === 'room_missing') handleRoomMissing(roomId);

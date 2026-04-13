@@ -3,6 +3,7 @@
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 
 export type MessageDeliveryState = 'sending' | 'sent' | 'failed' | 'received';
+export type ChatMessageType = 'text' | 'image';
 
 export type ServerUser = {
   clientId: string;
@@ -32,6 +33,8 @@ export type ChatMessage = {
   senderAvatarSeed: string;
   senderColor: string;
   content: string;
+  messageType: ChatMessageType;
+  imageData?: string;
   createdAt: string;
 };
 

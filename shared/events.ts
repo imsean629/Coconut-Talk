@@ -40,6 +40,8 @@ export type SendMessagePayload = {
   id: string;
   roomId: string;
   content: string;
+  messageType?: 'text' | 'image';
+  imageData?: string;
 };
 
 export type AckErrorCode = 'room_missing' | 'not_member' | 'invalid_password' | 'unknown';

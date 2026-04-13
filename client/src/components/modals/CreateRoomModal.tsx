@@ -67,7 +67,7 @@ export function CreateRoomModal({
         )}
         <div>
           <span className="mb-2 block text-sm font-medium text-coconut-shell">처음 초대할 사람</span>
-          <p className="mb-3 text-xs text-coconut-shell/65">초대된 사람은 바로 참여자로 추가돼요. 비공개방은 다른 사람도 비밀번호를 입력하면 입장할 수 있어요.</p>
+          <p className="mb-3 text-xs text-coconut-shell/65">공개방은 초대한 사람이 바로 참여자로 추가돼요. 비공개방은 초대 여부와 관계없이 비밀번호를 입력해야 입장할 수 있어요.</p>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="닉네임 검색" className="mb-3 w-full rounded-[18px] border border-coconut-sand bg-white px-4 py-3 outline-none transition focus:border-coconut-palm focus:ring-4 focus:ring-coconut-palm/10" />
           <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
             {filtered.map((user) => {

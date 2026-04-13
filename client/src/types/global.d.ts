@@ -4,11 +4,23 @@ declare global {
   interface Window {
     coconutDesktop?: {
       setWindowMode: (mode: 'login' | 'main') => Promise<void>;
+      appWindow: {
+        getCurrentOpacity: () => Promise<number>;
+        setCurrentOpacity: (opacity: number) => Promise<number>;
+        minimizeCurrent: () => Promise<boolean>;
+        closeCurrent: () => Promise<boolean>;
+      };
       notify: {
         showMessage: (payload: DesktopNotificationPayload) => Promise<boolean>;
       };
+      notificationPopup: {
+        openTarget: (payload: { notificationId: string; roomId?: string }) => Promise<boolean>;
+        dismiss: (notificationId: string) => Promise<boolean>;
+      };
       roomWindow: {
         open: (roomId: string) => Promise<boolean>;
+        getCurrentOpacity: () => Promise<number>;
+        setCurrentOpacity: (opacity: number) => Promise<number>;
         minimizeCurrent: () => Promise<boolean>;
         closeCurrent: () => Promise<boolean>;
         shouldNotify: (roomId: string) => Promise<boolean>;

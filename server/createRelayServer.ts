@@ -117,6 +117,8 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
     senderAvatarSeed: sender.avatarSeed,
     senderColor: sender.color,
     content: payload.content,
+    messageType: payload.messageType === 'image' ? 'image' : 'text',
+    imageData: payload.imageData,
     createdAt: new Date().toISOString(),
   });
 
@@ -146,12 +148,13 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       if (!clientId) return void ack(roomAck(undefined, 'unknown'));
 
       const normalizedPassword = payload.type === 'private' ? payload.password?.trim() : undefined;
+      const initialParticipantIds = payload.type === 'private' ? [clientId] : Array.from(new Set([clientId, ...payload.invitedUserIds]));
       const room: RoomRecord = {
         id: randomUUID(),
         title: payload.title.trim(),
         description: payload.description?.trim(),
         type: payload.type,
-        participantIds: Array.from(new Set([clientId, ...payload.invitedUserIds])),
+        participantIds: initialParticipantIds,
         createdBy: clientId,
         createdAt: new Date().toISOString(),
         hasPassword: Boolean(normalizedPassword),
@@ -170,8 +173,7 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       const room = rooms.get(payload.roomId);
       if (!room) return void ack(roomAck(undefined, 'room_missing'));
 
-      const alreadyMember = room.participantIds.includes(clientId);
-      if (room.type === 'private' && room.hasPassword && !alreadyMember) {
+      if (room.type === 'private' && room.hasPassword) {
         if ((payload.password ?? '').trim() !== (room.password ?? '')) {
           ack(roomAck(undefined, 'invalid_password'));
           return;
@@ -217,6 +219,11 @@ export async function createRelayServer(port = 3030, silent = false): Promise<Re
       const room = rooms.get(payload.roomId);
       if (!room) return void ack(roomAck(undefined, 'room_missing'));
       if (!room.participantIds.includes(clientId)) return void ack(roomAck(undefined, 'not_member'));
+
+       if (room.type === 'private') {
+        ack(roomAck(room));
+        return;
+      }
 
       room.participantIds = Array.from(new Set([...room.participantIds, ...payload.userIds]));
       payload.userIds.forEach((userId) => joinAllUserSocketsToRoom(userId, room.id));

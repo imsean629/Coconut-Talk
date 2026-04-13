@@ -1,10 +1,12 @@
 ﻿import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { LoginPopup } from './components/LoginPopup';
+import { MinusIcon, XMarkIcon } from '@heroicons/react/24/solid';
 import { Sidebar } from './components/layout/Sidebar';
 import { CreateRoomModal } from './components/modals/CreateRoomModal';
 import { InviteUsersModal } from './components/modals/InviteUsersModal';
 import { LogoutConfirmModal } from './components/modals/LogoutConfirmModal';
 import { PrivateRoomPasswordModal } from './components/modals/PrivateRoomPasswordModal';
+import { DesktopNotificationPopup } from './components/ui/DesktopNotificationPopup';
 import { ToastLayer } from './components/ui/ToastLayer';
 import { LoungePage } from './pages/LoungePage';
 import { RoomDetailPage } from './pages/RoomDetailPage';
@@ -15,13 +17,40 @@ import { AppRoom, NavItem } from './types';
 
 const readWindowMode = () => {
   if (typeof window === 'undefined') {
-    return { isRoomWindow: false, roomId: null as string | null };
+    return { mode: 'main' as const, roomId: null as string | null, notificationId: null as string | null, title: '', body: '', popupRoomId: null as string | null };
   }
 
   const searchParams = new URLSearchParams(window.location.search);
+  const view = searchParams.get('view');
+  if (view === 'room') {
+    return {
+      mode: 'room' as const,
+      roomId: searchParams.get('roomId'),
+      notificationId: null,
+      title: '',
+      body: '',
+      popupRoomId: null,
+    };
+  }
+
+  if (view === 'notification') {
+    return {
+      mode: 'notification' as const,
+      roomId: null,
+      notificationId: searchParams.get('notificationId'),
+      title: searchParams.get('title') ?? '',
+      body: searchParams.get('body') ?? '',
+      popupRoomId: searchParams.get('roomId'),
+    };
+  }
+
   return {
-    isRoomWindow: searchParams.get('view') === 'room',
-    roomId: searchParams.get('roomId'),
+    mode: 'main' as const,
+    roomId: null,
+    notificationId: null,
+    title: '',
+    body: '',
+    popupRoomId: null,
   };
 };
 
@@ -44,11 +73,12 @@ function MainShell() {
   const leaveRoom = useChatStore((state) => state.leaveRoom);
   const createRoom = useChatStore((state) => state.createRoom);
 
-  const [activeNav, setActiveNav] = useState<NavItem>('lounge');
+  const [activeNav, setActiveNav] = useState<NavItem>('users');
   const [unreadByRoom, setUnreadByRoom] = useState<Record<string, number>>({});
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [passwordTargetRoom, setPasswordTargetRoom] = useState<AppRoom | null>(null);
+  const [mainWindowOpacity, setMainWindowOpacity] = useState(1);
 
   const previousLastMessageRef = useRef<Record<string, string>>({});
   const messageBootstrapRef = useRef(false);
@@ -60,6 +90,24 @@ function MainShell() {
 
   useEffect(() => {
     window.coconutDesktop?.setWindowMode(session ? 'main' : 'login');
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) {
+      setMainWindowOpacity(1);
+      return;
+    }
+
+    let cancelled = false;
+    void window.coconutDesktop?.appWindow.getCurrentOpacity().then((opacity) => {
+      if (!cancelled && typeof opacity === 'number') {
+        setMainWindowOpacity(opacity);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [session]);
 
   useEffect(() => {
@@ -112,7 +160,7 @@ function MainShell() {
           const room = rooms.find((item) => item.id === roomId) ?? lostRooms.find((item) => item.id === roomId);
           await window.coconutDesktop?.notify.showMessage({
             title: room ? `${room.title} 새 메시지` : `${lastMessage.senderNickname}님의 새 메시지`,
-            body: lastMessage.content,
+            body: lastMessage.messageType === 'image' ? '사진을 보냈습니다.' : lastMessage.content,
             roomId,
           });
         }
@@ -130,8 +178,14 @@ function MainShell() {
       return next;
     });
     await loadRoomMessages(roomId);
-    const opened = await window.coconutDesktop?.roomWindow.open(roomId);
-    if (!opened && typeof window !== 'undefined') {
+    const desktopRoomWindow = window.coconutDesktop?.roomWindow;
+    if (desktopRoomWindow) {
+      console.log('[renderer] opening electron room window', roomId);
+      await desktopRoomWindow.open(roomId);
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      console.log('[renderer] opening browser popup fallback', roomId);
       window.open(`${window.location.origin}${window.location.pathname}?view=room&roomId=${encodeURIComponent(roomId)}`, '_blank', 'popup,width=720,height=760');
     }
   };
@@ -152,8 +206,7 @@ function MainShell() {
       return;
     }
 
-    const isMember = !!session && room.participantIds.includes(session.clientId);
-    if (room.type === 'private' && room.hasPassword && !isMember) {
+    if (room.type === 'private' && room.hasPassword) {
       setPasswordTargetRoom(room);
       return;
     }
@@ -214,11 +267,34 @@ function MainShell() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-tropical p-5 lg:p-7">
+    <div className="relative h-screen overflow-hidden bg-tropical p-[10px]">
+      <div className="app-no-drag absolute left-1/2 top-2 z-20 -translate-x-1/2">
+        <div className="app-drag h-2 w-[480px] max-w-full rounded-full bg-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]" title="여기를 잡고 창을 이동할 수 있어요" />
+      </div>
+      <div className="app-no-drag absolute right-5 top-4 z-20 flex items-center gap-2">
+        <button type="button" aria-label="최소화" onClick={() => void window.coconutDesktop?.appWindow.minimizeCurrent()} className="flex h-9 w-9 items-center justify-center rounded-full border border-[#d7bea4] bg-[linear-gradient(180deg,#fff7ee_0%,#f0decb_100%)] text-[#5d3f30] shadow-[0_6px_16px_rgba(84,56,38,0.14)] transition hover:bg-[linear-gradient(180deg,#fffaf4_0%,#f3e5d5_100%)]">
+          <MinusIcon className="h-4 w-4" />
+        </button>
+        <button type="button" aria-label="닫기" onClick={() => void window.coconutDesktop?.appWindow.closeCurrent()} className="flex h-9 w-9 items-center justify-center rounded-full border border-[#d7bea4] bg-[linear-gradient(180deg,#fff7ee_0%,#f0decb_100%)] text-[#5d3f30] shadow-[0_6px_16px_rgba(84,56,38,0.14)] transition hover:bg-[linear-gradient(180deg,#fffaf4_0%,#f3e5d5_100%)]">
+          <XMarkIcon className="h-4 w-4" />
+        </button>
+      </div>
       <ToastLayer />
-      <div className="grid h-full min-h-0 grid-cols-[220px_minmax(0,1fr)] gap-6">
+      <div className="grid h-full min-h-0 grid-cols-[154px_minmax(0,1fr)] gap-[10px]">
         <div className="min-h-0 overflow-hidden">
-          <Sidebar active={activeNav} onChange={setActiveNav} session={session} connectionState={connectionState} onLogout={() => setShowLogoutConfirm(true)} />
+          <Sidebar
+            active={activeNav}
+            onChange={setActiveNav}
+            session={session}
+            connectionState={connectionState}
+            windowOpacity={mainWindowOpacity}
+            onOpacityChange={(opacity) => {
+              void window.coconutDesktop?.appWindow.setCurrentOpacity(opacity).then((nextOpacity) => {
+                setMainWindowOpacity(nextOpacity);
+              });
+            }}
+            onLogout={() => setShowLogoutConfirm(true)}
+          />
         </div>
 
         <main className="min-h-0 min-w-0 overflow-hidden">
@@ -280,7 +356,7 @@ function MainShell() {
           onClose={() => setShowLogoutConfirm(false)}
           onConfirm={() => {
             setShowLogoutConfirm(false);
-            setActiveNav('lounge');
+            setActiveNav('users');
             setUnreadByRoom({});
             logout();
           }}
@@ -308,6 +384,8 @@ function RoomWindowShell({ roomId }: { roomId: string }) {
   const setTyping = useChatStore((state) => state.setTyping);
 
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [windowOpacity, setWindowOpacity] = useState(1);
+  const [bridgeStatus, setBridgeStatus] = useState('브리지 확인 중');
   const joinedRoomRef = useRef<string | null>(null);
 
   const room = useMemo(() => rooms.find((item) => item.id === roomId) ?? lostRooms.find((item) => item.id === roomId) ?? null, [lostRooms, roomId, rooms]);
@@ -324,19 +402,44 @@ function RoomWindowShell({ roomId }: { roomId: string }) {
   }, [loadRoomMessages, roomId]);
 
   useEffect(() => {
-    if (!session || isLost) return;
+    if (!session || isLost || (room?.type === 'private' && room.hasPassword)) return;
     if (joinedRoomRef.current === roomId) return;
 
     joinedRoomRef.current = roomId;
     void joinRoom(roomId);
   }, [isLost, joinRoom, roomId, session]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const roomWindowBridge = window.coconutDesktop?.roomWindow;
+
+    if (!roomWindowBridge) {
+      setBridgeStatus('브리지 없음');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setBridgeStatus('브리지 연결됨');
+
+    void roomWindowBridge.getCurrentOpacity().then((opacity) => {
+      if (!cancelled && typeof opacity === 'number') {
+        setWindowOpacity(opacity);
+        setBridgeStatus(`브리지 연결됨, 현재 투명도 ${Math.round(opacity * 100)}%`);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId]);
+
   if (!hydrated || !session) {
     return null;
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-tropical p-3">
+    <div className="h-screen w-screen overflow-hidden bg-transparent">
       <RoomDetailPage
         room={room}
         isLost={isLost}
@@ -344,19 +447,46 @@ function RoomWindowShell({ roomId }: { roomId: string }) {
         messages={messages}
         session={session}
         connectionState={connectionState}
+        windowOpacity={windowOpacity}
+        bridgeStatus={bridgeStatus}
         typing={typingByRoom[roomId] ?? []}
-        onClose={() => void window.coconutDesktop?.roomWindow.closeCurrent()}
-        onMinimize={() => void window.coconutDesktop?.roomWindow.minimizeCurrent()}
-        onStartDrag={(_event: ReactMouseEvent<HTMLDivElement>) => {}}
+        onClose={async () => {
+          const roomWindowBridge = window.coconutDesktop?.roomWindow;
+          if (!roomWindowBridge) {
+            setBridgeStatus('닫기 실패: 브리지 없음');
+            return;
+          }
+
+          setBridgeStatus('닫기 요청 보냄');
+          const result = await roomWindowBridge.closeCurrent();
+          setBridgeStatus(`닫기 응답: ${result ? '성공' : '실패'}`);
+        }}
+        onMinimize={async () => {
+          const roomWindowBridge = window.coconutDesktop?.roomWindow;
+          if (!roomWindowBridge) {
+            setBridgeStatus('최소화 실패: 브리지 없음');
+            return;
+          }
+
+          setBridgeStatus('최소화 요청 보냄');
+          const result = await roomWindowBridge.minimizeCurrent();
+          setBridgeStatus(`최소화 응답: ${result ? '성공' : '실패'}`);
+        }}
+        onOpacityChange={(opacity) => {
+          const roomWindowBridge = window.coconutDesktop?.roomWindow;
+          if (!roomWindowBridge) {
+            setBridgeStatus('투명도 변경 실패: 브리지 없음');
+            return;
+          }
+
+          setBridgeStatus(`투명도 요청 보냄: ${Math.round(opacity * 100)}%`);
+          void roomWindowBridge.setCurrentOpacity(opacity).then((nextOpacity) => {
+            setWindowOpacity(nextOpacity);
+            setBridgeStatus(`투명도 응답: ${Math.round(nextOpacity * 100)}%`);
+          });
+        }}
         onInvite={() => setShowInviteModal(true)}
-        onLeaveRoom={() =>
-          void leaveRoom(roomId).then((success) => {
-            if (success) {
-              void window.coconutDesktop?.roomWindow.closeCurrent();
-            }
-          })
-        }
-        onSendMessage={(content) => sendMessage(roomId, content)}
+        onSendMessage={(payload) => sendMessage(roomId, payload)}
         onTypingChange={(isTyping) => setTyping(roomId, isTyping)}
       />
 
@@ -374,10 +504,14 @@ function RoomWindowShell({ roomId }: { roomId: string }) {
 }
 
 export default function App() {
-  const { isRoomWindow, roomId } = readWindowMode();
+  const { mode, roomId, notificationId, title, body, popupRoomId } = readWindowMode();
 
-  if (isRoomWindow && roomId) {
+  if (mode === 'room' && roomId) {
     return <RoomWindowShell roomId={roomId} />;
+  }
+
+  if (mode === 'notification' && notificationId) {
+    return <DesktopNotificationPopup notificationId={notificationId} title={title} body={body} roomId={popupRoomId} />;
   }
 
   return <MainShell />;
