@@ -46,6 +46,7 @@ const normalizeAckError = (error?: AckErrorCode) => {
 type ChatState = {
   session: SessionProfile | null;
   serverUrl: string;
+  desktopNotificationsEnabled: boolean;
   hydrated: boolean;
   connectionState: ConnectionState;
   serverEpoch: string | null;
@@ -53,6 +54,7 @@ type ChatState = {
   rooms: AppRoom[];
   lostRooms: LostRoom[];
   messagesByRoom: Record<string, LocalMessage[]>;
+  latestIncomingMessage: LocalMessage | null;
   typingByRoom: Record<string, AppTypingState[]>;
   announcements: Announcement[];
   loungeFeed: string[];
@@ -60,6 +62,7 @@ type ChatState = {
   initializeSession: () => void;
   login: (payload: { nickname: string; avatarVariant: string; serverUrl: string }) => void;
   logout: () => void;
+  setDesktopNotificationsEnabled: (enabled: boolean) => void;
   loadRoomMessages: (roomId: string) => Promise<void>;
   joinRoom: (roomId: string, password?: string) => Promise<AppRoom | null>;
   leaveRoom: (roomId: string) => Promise<boolean>;
@@ -91,7 +94,6 @@ const markLostRoomsFromSync = (state: ChatState, payload: SessionSyncPayload): L
 };
 
 const setMessageStatus = async (id: string, status: LocalMessage['status'], error?: string) => {
-  await window.coconutDesktop?.db.updateMessageStatus({ id, status, error });
   useChatStore.setState((state) => {
     const next: Record<string, LocalMessage[]> = {};
     Object.entries(state.messagesByRoom).forEach(([roomId, messages]) => {
@@ -99,6 +101,7 @@ const setMessageStatus = async (id: string, status: LocalMessage['status'], erro
     });
     return { messagesByRoom: next };
   });
+  void window.coconutDesktop?.db.updateMessageStatus({ id, status, error });
 };
 
 const handleRoomMissing = (roomId: string) => {
@@ -122,9 +125,39 @@ const removeRoomFromState = (roomId: string) => {
   }));
 };
 
+const replaceMessageInState = (messageId: string, updater: (message: LocalMessage) => LocalMessage) => {
+  useChatStore.setState((state) => {
+    const next: Record<string, LocalMessage[]> = {};
+    Object.entries(state.messagesByRoom).forEach(([roomId, messages]) => {
+      next[roomId] = messages.map((message) => (message.id === messageId ? updater(message) : message));
+    });
+    return { messagesByRoom: next };
+  });
+};
+
+const compactMessageImage = async (message: LocalMessage) => {
+  if (message.messageType !== 'image' || !message.imageData?.startsWith('data:image/')) {
+    return message;
+  }
+
+  const storedImageUrl = await window.coconutDesktop?.db.storeImageDataUrl({ messageId: message.id, dataUrl: message.imageData });
+  if (!storedImageUrl) {
+    return message;
+  }
+
+  const compactedMessage = { ...message, imageData: storedImageUrl };
+  replaceMessageInState(message.id, () => compactedMessage);
+  return compactedMessage;
+};
+
 const handleIncomingMessage = async (message: LocalMessage) => {
-  await window.coconutDesktop?.db.upsertMessage(message);
   useChatStore.setState((state) => ({ messagesByRoom: { ...state.messagesByRoom, [message.roomId]: upsertMessageList(state.messagesByRoom[message.roomId] ?? [], message) } }));
+  void window.coconutDesktop?.db.upsertMessage(message);
+  void compactMessageImage(message).then((compactedMessage) => {
+    if (compactedMessage.imageData !== message.imageData) {
+      void window.coconutDesktop?.db.upsertMessage(compactedMessage);
+    }
+  });
 };
 
 const applySessionSync = (payload: SessionSyncPayload) => {
@@ -223,7 +256,9 @@ const wireSocket = (session: SessionProfile, serverUrl: string) => {
     if (current && !knowsRoom && socket) {
       await resyncSession(socket, current);
     }
-    await handleIncomingMessage({ ...message, status: current?.clientId === message.senderId ? 'sent' : 'received' });
+    const nextMessage = { ...message, status: current?.clientId === message.senderId ? 'sent' : 'received' } as LocalMessage;
+    void handleIncomingMessage(nextMessage);
+    useChatStore.setState({ latestIncomingMessage: nextMessage });
   });
 
   socket.on('typing:update', (payload) => {
@@ -243,6 +278,7 @@ export const useChatStore = create<ChatState>()(
     (set, get) => ({
       session: null,
       serverUrl: DEFAULT_SERVER_URL,
+      desktopNotificationsEnabled: true,
       hydrated: false,
       connectionState: 'disconnected',
       serverEpoch: null,
@@ -250,6 +286,7 @@ export const useChatStore = create<ChatState>()(
       rooms: [],
       lostRooms: [],
       messagesByRoom: {},
+      latestIncomingMessage: null,
       typingByRoom: {},
       announcements: loungeAnnouncements,
       loungeFeed,
@@ -273,8 +310,9 @@ export const useChatStore = create<ChatState>()(
       logout: () => {
         socket?.disconnect();
         socket = null;
-        set({ session: null, connectionState: 'disconnected', serverEpoch: null, users: [], rooms: [], lostRooms: [], typingByRoom: {} });
+        set({ session: null, connectionState: 'disconnected', serverEpoch: null, users: [], rooms: [], lostRooms: [], latestIncomingMessage: null, typingByRoom: {} });
       },
+      setDesktopNotificationsEnabled: (desktopNotificationsEnabled) => set({ desktopNotificationsEnabled }),
       loadRoomMessages: async (roomId) => {
         const messages = (await window.coconutDesktop?.db.getMessages(roomId)) ?? [];
         set((state) => ({ messagesByRoom: { ...state.messagesByRoom, [roomId]: messages } }));
@@ -396,7 +434,7 @@ export const useChatStore = create<ChatState>()(
     {
       name: 'coconut-talk-session',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ session: state.session, serverUrl: state.serverUrl }),
+      partialize: (state) => ({ session: state.session, serverUrl: state.serverUrl, desktopNotificationsEnabled: state.desktopNotificationsEnabled }),
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.hydrated = true;

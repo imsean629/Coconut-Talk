@@ -1,4 +1,4 @@
-import { ArrowLeftStartOnRectangleIcon, ChatBubbleBottomCenterTextIcon, SignalIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftStartOnRectangleIcon, ChatBubbleBottomCenterTextIcon, Cog6ToothIcon, SignalIcon } from '@heroicons/react/24/outline';
 import { ChangeEvent } from 'react';
 import clsx from 'clsx';
 import { AppConnectionState, NavItem, SessionProfile } from '../../types';
@@ -13,7 +13,7 @@ const items: { id: NavItem; label: string; icon: typeof SignalIcon }[] = [
 const statusLabel: Record<AppConnectionState, string> = {
   connecting: '연결 중',
   connected: '연결됨',
-  disconnected: '끊김',
+  disconnected: '오프라인',
 };
 
 const statusTone: Record<AppConnectionState, string> = {
@@ -29,6 +29,7 @@ export function Sidebar({
   connectionState,
   windowOpacity,
   onOpacityChange,
+  onOpenSettings,
   onLogout,
 }: {
   active: NavItem;
@@ -37,6 +38,7 @@ export function Sidebar({
   connectionState: AppConnectionState;
   windowOpacity: number;
   onOpacityChange: (opacity: number) => void;
+  onOpenSettings: () => void;
   onLogout: () => void;
 }) {
   const handleOpacityChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -75,8 +77,16 @@ export function Sidebar({
       </label>
       <button
         type="button"
+        onClick={onOpenSettings}
+        className="flex w-full items-center gap-2 rounded-[16px] border border-[#eed8c0] bg-[#fff8f1] px-2.5 py-2.5 text-coconut-shell transition hover:-translate-y-0.5 hover:bg-[#fff0e0]"
+      >
+        <Cog6ToothIcon className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-[12px] font-medium leading-tight">설정</span>
+      </button>
+      <button
+        type="button"
         onClick={onLogout}
-        className="mt-2.5 flex w-full items-center gap-2 rounded-[16px] border border-[#eed8c0] bg-[#fff8f1] px-2.5 py-2.5 text-coconut-shell transition hover:-translate-y-0.5 hover:bg-[#fff0e0]"
+        className="mt-2 flex w-full items-center gap-2 rounded-[16px] border border-[#eed8c0] bg-[#fff8f1] px-2.5 py-2.5 text-coconut-shell transition hover:-translate-y-0.5 hover:bg-[#fff0e0]"
       >
         <ArrowLeftStartOnRectangleIcon className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium leading-tight">로그아웃</span>

@@ -1,5 +1,5 @@
 import { ExclamationTriangleIcon, MinusIcon, PaperAirplaneIcon, PhotoIcon, PlusIcon, SignalIcon, UserGroupIcon, XMarkIcon } from '@heroicons/react/24/solid';
-import { ChangeEvent, ClipboardEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, FormEvent, MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Avatar } from '../components/ui/Avatar';
 import { AppConnectionState, AppRoom, AppTypingState, AppUser, LocalMessage, LostRoom, SessionProfile } from '../types';
 import { formatTime } from '../utils/format';
@@ -46,6 +46,7 @@ export function RoomDetailPage({
 }) {
   const [draft, setDraft] = useState('');
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const participants = useMemo(() => users.filter((user) => room?.participantIds.includes(user.clientId)), [room?.participantIds, users]);
   const opacityPercent = Math.round(windowOpacity * 100);
@@ -65,6 +66,19 @@ export function RoomDetailPage({
     const timer = setTimeout(() => onTypingChange(false), 1200);
     return () => clearTimeout(timer);
   }, [draft, onTypingChange, room]);
+
+  useEffect(() => {
+    if (!expandedImage) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setExpandedImage(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [expandedImage]);
 
   if (!room) {
     return null;
@@ -102,6 +116,12 @@ export function RoomDetailPage({
     reader.readAsDataURL(file);
   };
 
+  const closeExpandedImage = () => setExpandedImage(null);
+
+  const stopImageOverlayClose = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+  };
+
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[30px] border border-white/80 bg-[#fffaf3] shadow-float">
       <div className="app-no-drag absolute left-1/2 top-2 z-20 -translate-x-1/2">
@@ -116,10 +136,10 @@ export function RoomDetailPage({
               {room.type === 'public' ? '공개방' : '비공개방'}
             </span>
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${connectionState === 'connected' ? 'bg-[#e6f2dc] text-coconut-leaf' : connectionState === 'connecting' ? 'bg-[#fff0df] text-coconut-shell' : 'bg-[#ffe8ee] text-rose-700'}`}>
-              {connectionState === 'connected' ? '연결됨' : connectionState === 'connecting' ? '연결 중' : '끊김'}
+              {connectionState === 'connected' ? '연결됨' : connectionState === 'connecting' ? '연결 중' : '오프라인'}
             </span>
           </div>
-          <p className="mt-1 text-[11px] text-coconut-shell/70">{room.description || '실시간으로 바로 대화할 수 있는 방이에요.'}</p>
+          <p className="mt-1 text-[11px] text-coconut-shell/70">{room.description || '접속자 목록에서 바로 시작한 대화방이에요.'}</p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-coconut-shell/72">
             <span className="inline-flex items-center gap-1 rounded-full bg-[#fff1df] px-2 py-1">
               <UserGroupIcon className="h-3 w-3" />
@@ -163,8 +183,8 @@ export function RoomDetailPage({
         <div className="mx-4 mt-3 flex items-start gap-3 rounded-[18px] border border-[#f2d3da] bg-[#fff1f4] px-4 py-3 text-sm text-rose-700">
           <ExclamationTriangleIcon className="mt-0.5 h-4.5 w-4.5" />
           <div>
-            <p className="font-semibold">이 방은 서버 재시작으로 사라졌어요</p>
-            <p className="mt-1 text-xs">기존 대화 기록은 볼 수 있지만 새 메시지는 보낼 수 없어요.</p>
+            <p className="font-semibold">이 방은 서버 재시작으로 사라졌어요.</p>
+            <p className="mt-1 text-xs">기존 대화 기록은 보이지만 새 메시지는 보낼 수 없어요.</p>
           </div>
         </div>
       )}
@@ -186,7 +206,13 @@ export function RoomDetailPage({
                   </div>
                   <div className={`rounded-[16px] px-3 py-2 text-[11px] leading-[1.45] shadow-sm ${isMe ? 'bg-gradient-to-r from-coconut-shell to-coconut-bark text-white' : 'bg-[#fff7ee] text-coconut-ink'}`}>
                     {message.messageType === 'image' && message.imageData && (
-                      <img src={message.imageData} alt="전송된 이미지" className="max-h-[180px] rounded-[12px] object-contain bg-white/30" />
+                      <button
+                        type="button"
+                        onClick={() => setExpandedImage(message.imageData ?? null)}
+                        className="block overflow-hidden rounded-[12px] bg-white/30 transition hover:scale-[1.01] hover:shadow-md"
+                      >
+                        <img src={message.imageData} alt="전송된 이미지" className="max-h-[180px] rounded-[12px] object-contain" />
+                      </button>
                     )}
                     {message.messageType === 'image' && message.content && <p className="mt-2 whitespace-pre-wrap">{message.content}</p>}
                     {message.messageType !== 'image' && <p className="whitespace-pre-wrap">{message.content}</p>}
@@ -229,7 +255,7 @@ export function RoomDetailPage({
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onPaste={handlePaste}
-          placeholder={isLost ? '사라진 방에서는 새 메시지를 보낼 수 없어요' : connectionState === 'connected' ? '메시지를 입력하거나 이미지를 붙여넣어보세요' : '연결이 복구되면 메시지를 보낼 수 있어요'}
+          placeholder={isLost ? '사라진 방에서는 새 메시지를 보낼 수 없어요.' : connectionState === 'connected' ? '메시지를 입력하거나 이미지를 붙여넣어보세요.' : '연결이 복구되면 메시지를 보낼 수 있어요.'}
           disabled={isLost || connectionState !== 'connected'}
           className="flex-1 bg-transparent px-3 py-1 text-sm outline-none disabled:cursor-not-allowed"
         />
@@ -237,6 +263,21 @@ export function RoomDetailPage({
           <PaperAirplaneIcon className="h-4 w-4" />
         </button>
       </form>
+
+      {expandedImage && (
+        <div className="app-no-drag absolute inset-0 z-40 flex items-center justify-center bg-[#2f1f17]/78 p-6 backdrop-blur-sm" onClick={closeExpandedImage}>
+          <div className="relative flex max-h-full w-full max-w-4xl items-center justify-center" onClick={stopImageOverlayClose}>
+            <button
+              type="button"
+              onClick={closeExpandedImage}
+              className="absolute right-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-white/30 bg-[#fff8f1]/90 text-coconut-shell shadow-lg transition hover:bg-white"
+            >
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+            <img src={expandedImage} alt="확대된 이미지" className="max-h-[82vh] w-auto max-w-full rounded-[24px] border border-white/20 bg-white/95 object-contain shadow-[0_20px_60px_rgba(0,0,0,0.3)]" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

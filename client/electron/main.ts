@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRelayServer, RelayServerHandle } from '../../server/createRelayServer.js';
 import { ChatMessageType, MessageDeliveryState } from '../../shared/models.js';
 
@@ -51,6 +51,23 @@ const defaultRoomOpacity = 1;
 const loginWindowSize = { width: 490, height: 640 };
 const mainWindowSize = { width: 484, height: 600 };
 const notificationWindowSize = { width: 320, height: 112 };
+const messageImageDirectoryPath = () => path.join(app.getPath('userData'), 'message-images');
+
+const ensureMessageImageDirectory = () => {
+  fs.mkdirSync(messageImageDirectoryPath(), { recursive: true });
+};
+
+const storeImageDataUrl = (messageId: string, dataUrl: string) => {
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) return dataUrl;
+
+  const [, mimeType, base64Payload] = match;
+  const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
+  ensureMessageImageDirectory();
+  const targetPath = path.join(messageImageDirectoryPath(), `${messageId}.${extension}`);
+  fs.writeFileSync(targetPath, Buffer.from(base64Payload, 'base64'));
+  return pathToFileURL(targetPath).toString();
+};
 
 const initDatabase = () => {
   const dbPath = path.join(app.getPath('userData'), 'coconut-talk.sqlite');
@@ -674,15 +691,16 @@ app.whenReady().then(async () => {
     return !roomWindow.isVisible() || !roomWindow.isFocused();
   });
   ipcMain.handle('db:get-messages', (_, roomId: string) => {
-    const statement = database.prepare('SELECT * FROM messages WHERE room_id = ? ORDER BY created_at ASC');
+      const statement = database.prepare('SELECT * FROM messages WHERE room_id = ? ORDER BY created_at ASC');
     return statement.all(roomId).map((row) => rowToMessage(row as Record<string, unknown>));
   });
   ipcMain.handle('db:upsert-message', (_, message: LocalMessage) => upsertMessage(message));
   ipcMain.handle('db:upsert-messages', (_, messages: LocalMessage[]) => messages.map((message) => upsertMessage(message)));
+  ipcMain.handle('db:store-image-data-url', (_, payload: { messageId: string; dataUrl: string }) => storeImageDataUrl(payload.messageId, payload.dataUrl));
   ipcMain.handle('db:update-message-status', (_, payload: { id: string; status: MessageDeliveryState; error?: string }) => {
-    const statement = database.prepare('UPDATE messages SET status = ?, error = ? WHERE id = ?');
-    statement.run(payload.status, payload.error ?? null, payload.id);
-  });
+      const statement = database.prepare('UPDATE messages SET status = ?, error = ? WHERE id = ?');
+      statement.run(payload.status, payload.error ?? null, payload.id);
+    });
 
   await createMainWindow();
   mainWindow?.on('focus', () => stopWindowFlash(mainWindow));

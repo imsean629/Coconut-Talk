@@ -2,10 +2,10 @@
 import { LoginPopup } from './components/LoginPopup';
 import { MinusIcon, XMarkIcon } from '@heroicons/react/24/solid';
 import { Sidebar } from './components/layout/Sidebar';
-import { CreateRoomModal } from './components/modals/CreateRoomModal';
 import { InviteUsersModal } from './components/modals/InviteUsersModal';
 import { LogoutConfirmModal } from './components/modals/LogoutConfirmModal';
 import { PrivateRoomPasswordModal } from './components/modals/PrivateRoomPasswordModal';
+import { SettingsModal } from './components/modals/SettingsModal';
 import { DesktopNotificationPopup } from './components/ui/DesktopNotificationPopup';
 import { ToastLayer } from './components/ui/ToastLayer';
 import { LoungePage } from './pages/LoungePage';
@@ -59,29 +59,28 @@ function MainShell() {
   const hydrated = useChatStore((state) => state.hydrated);
   const serverUrl = useChatStore((state) => state.serverUrl);
   const connectionState = useChatStore((state) => state.connectionState);
+  const desktopNotificationsEnabled = useChatStore((state) => state.desktopNotificationsEnabled);
   const users = useChatStore((state) => state.users);
   const rooms = useChatStore((state) => state.rooms);
   const lostRooms = useChatStore((state) => state.lostRooms);
   const announcements = useChatStore((state) => state.announcements);
   const feed = useChatStore((state) => state.loungeFeed);
-  const messagesByRoom = useChatStore((state) => state.messagesByRoom);
+  const latestIncomingMessage = useChatStore((state) => state.latestIncomingMessage);
   const initializeSession = useChatStore((state) => state.initializeSession);
   const loadRoomMessages = useChatStore((state) => state.loadRoomMessages);
   const login = useChatStore((state) => state.login);
   const logout = useChatStore((state) => state.logout);
+  const setDesktopNotificationsEnabled = useChatStore((state) => state.setDesktopNotificationsEnabled);
   const joinRoom = useChatStore((state) => state.joinRoom);
   const leaveRoom = useChatStore((state) => state.leaveRoom);
   const createRoom = useChatStore((state) => state.createRoom);
 
   const [activeNav, setActiveNav] = useState<NavItem>('users');
   const [unreadByRoom, setUnreadByRoom] = useState<Record<string, number>>({});
-  const [showCreateRoom, setShowCreateRoom] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [passwordTargetRoom, setPasswordTargetRoom] = useState<AppRoom | null>(null);
   const [mainWindowOpacity, setMainWindowOpacity] = useState(1);
-
-  const previousLastMessageRef = useRef<Record<string, string>>({});
-  const messageBootstrapRef = useRef(false);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -127,48 +126,31 @@ function MainShell() {
 
   useEffect(() => {
     if (!session) {
-      previousLastMessageRef.current = {};
-      messageBootstrapRef.current = false;
       setUnreadByRoom({});
       return;
     }
+  }, [session]);
 
-    const nextSnapshot: Record<string, string> = {};
-    Object.entries(messagesByRoom).forEach(([roomId, messages]) => {
-      const lastMessage = messages.at(-1);
-      if (lastMessage) {
-        nextSnapshot[roomId] = lastMessage.id;
-      }
-    });
+  useEffect(() => {
+    if (!session || !latestIncomingMessage) return;
+    if (latestIncomingMessage.senderId === session.clientId) return;
 
-    if (!messageBootstrapRef.current) {
-      previousLastMessageRef.current = nextSnapshot;
-      messageBootstrapRef.current = true;
-      return;
-    }
+    void (async () => {
+      const roomId = latestIncomingMessage.roomId;
+      const shouldNotify = (await window.coconutDesktop?.roomWindow.shouldNotify(roomId)) ?? true;
+      if (!shouldNotify) return;
 
-    Object.entries(messagesByRoom).forEach(([roomId, messages]) => {
-      const lastMessage = messages.at(-1);
-      if (!lastMessage) return;
-      if (previousLastMessageRef.current[roomId] === lastMessage.id) return;
-      if (lastMessage.senderId === session.clientId) return;
+      setUnreadByRoom((current) => ({ ...current, [roomId]: (current[roomId] ?? 0) + 1 }));
+      if (!desktopNotificationsEnabled) return;
 
-      void (async () => {
-        const shouldNotify = (await window.coconutDesktop?.roomWindow.shouldNotify(roomId)) ?? true;
-        if (shouldNotify) {
-          setUnreadByRoom((current) => ({ ...current, [roomId]: (current[roomId] ?? 0) + 1 }));
-          const room = rooms.find((item) => item.id === roomId) ?? lostRooms.find((item) => item.id === roomId);
-          await window.coconutDesktop?.notify.showMessage({
-            title: room ? `${room.title} 새 메시지` : `${lastMessage.senderNickname}님의 새 메시지`,
-            body: lastMessage.messageType === 'image' ? '사진을 보냈습니다.' : lastMessage.content,
-            roomId,
-          });
-        }
-      })();
-    });
-
-    previousLastMessageRef.current = nextSnapshot;
-  }, [lostRooms, messagesByRoom, rooms, session]);
+      const room = rooms.find((item) => item.id === roomId) ?? lostRooms.find((item) => item.id === roomId);
+      await window.coconutDesktop?.notify.showMessage({
+        title: room ? `${room.title} 새 메시지` : `${latestIncomingMessage.senderNickname}님의 새 메시지`,
+        body: latestIncomingMessage.messageType === 'image' ? '사진을 보냈습니다.' : latestIncomingMessage.content,
+        roomId,
+      });
+    })();
+  }, [desktopNotificationsEnabled, latestIncomingMessage, lostRooms, rooms, session]);
 
   const openExternalRoomWindow = async (roomId: string) => {
     setUnreadByRoom((current) => {
@@ -293,6 +275,7 @@ function MainShell() {
                 setMainWindowOpacity(nextOpacity);
               });
             }}
+            onOpenSettings={() => setShowSettings(true)}
             onLogout={() => setShowLogoutConfirm(true)}
           />
         </div>
@@ -317,7 +300,6 @@ function MainShell() {
                 users={users}
                 session={session}
                 unreadByRoom={unreadByRoom}
-                onCreateRoom={() => setShowCreateRoom(true)}
                 onEnterRoom={(roomId) => void openRoom(roomId)}
                 onLeaveRoom={(roomId) => void handleLeaveRoom(roomId)}
               />
@@ -326,18 +308,6 @@ function MainShell() {
         </main>
       </div>
 
-      {showCreateRoom && (
-        <CreateRoomModal
-          users={users.filter((user) => user.clientId !== session.clientId)}
-          onClose={() => setShowCreateRoom(false)}
-          onCreate={(payload) =>
-            void createRoom(payload).then((room) => {
-              setShowCreateRoom(false);
-              if (room) void openRoom(room.id);
-            })
-          }
-        />
-      )}
       {passwordTargetRoom && (
         <PrivateRoomPasswordModal
           room={passwordTargetRoom}
@@ -349,6 +319,13 @@ function MainShell() {
               await completeRoomOpen(joinedRoom.id);
             }
           }}
+        />
+      )}
+      {showSettings && (
+        <SettingsModal
+          desktopNotificationsEnabled={desktopNotificationsEnabled}
+          onToggleDesktopNotifications={setDesktopNotificationsEnabled}
+          onClose={() => setShowSettings(false)}
         />
       )}
       {showLogoutConfirm && (

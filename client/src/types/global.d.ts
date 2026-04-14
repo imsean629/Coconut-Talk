@@ -30,6 +30,7 @@ declare global {
         getMessages: (roomId: string) => Promise<LocalMessage[]>;
         upsertMessage: (message: LocalMessage) => Promise<LocalMessage>;
         upsertMessages: (messages: LocalMessage[]) => Promise<LocalMessage[]>;
+        storeImageDataUrl: (payload: { messageId: string; dataUrl: string }) => Promise<string>;
         updateMessageStatus: (payload: { id: string; status: LocalMessage['status']; error?: string }) => Promise<void>;
       };
     };

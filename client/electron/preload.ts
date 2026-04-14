@@ -44,6 +44,7 @@ const coconutDesktopApi = {
     getMessages: (roomId: string) => ipcRenderer.invoke('db:get-messages', roomId),
     upsertMessage: (message: unknown) => ipcRenderer.invoke('db:upsert-message', message),
     upsertMessages: (messages: unknown[]) => ipcRenderer.invoke('db:upsert-messages', messages),
+    storeImageDataUrl: (payload: { messageId: string; dataUrl: string }) => ipcRenderer.invoke('db:store-image-data-url', payload),
     updateMessageStatus: (payload: unknown) => ipcRenderer.invoke('db:update-message-status', payload),
   },
 };
